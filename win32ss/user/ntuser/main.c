@@ -180,6 +180,14 @@ UserProcessDestroy(PEPROCESS Process)
     if (ppiScrnSaver == ppiCurrent)
         ppiScrnSaver = NULL;
 
+    IntFreeImeHotKeys();
+
+    if (gpwlCache)
+    {
+        ExFreePoolWithTag(gpwlCache, USERTAG_WINDOWLIST);
+        gpwlCache = NULL;
+    }
+
     /* Destroy user objects */
     UserDestroyObjectsForOwner(gHandleTable, ppiCurrent);
 
@@ -444,6 +452,7 @@ UserThreadDestroy(PETHREAD Thread)
     return STATUS_SUCCESS;
 }
 
+/* Win: xxxCreateThreadInfo */
 NTSTATUS NTAPI
 InitThreadCallback(PETHREAD Thread)
 {
@@ -454,6 +463,7 @@ InitThreadCallback(PETHREAD Thread)
     NTSTATUS Status = STATUS_SUCCESS;
     PTEB pTeb;
     PRTL_USER_PROCESS_PARAMETERS ProcessParams;
+    PKL pDefKL;
 
     Process = Thread->ThreadsProcess;
 
@@ -524,9 +534,8 @@ InitThreadCallback(PETHREAD Thread)
         goto error;
     }
 
-    ptiCurrent->KeyboardLayout = W32kGetDefaultKeyLayout();
-    if (ptiCurrent->KeyboardLayout)
-        UserReferenceObject(ptiCurrent->KeyboardLayout);
+    pDefKL = W32kGetDefaultKeyLayout();
+    UserAssignmentLock((PVOID*)&(ptiCurrent->KeyboardLayout), pDefKL);
 
     ptiCurrent->TIF_flags &= ~TIF_INCLEANUP;
 
@@ -542,10 +551,10 @@ InitThreadCallback(PETHREAD Thread)
     pci->ppi = ptiCurrent->ppi;
     pci->fsHooks = ptiCurrent->fsHooks;
     pci->dwTIFlags = ptiCurrent->TIF_flags;
-    if (ptiCurrent->KeyboardLayout)
+    if (pDefKL)
     {
-        pci->hKL = ptiCurrent->KeyboardLayout->hkl;
-        pci->CodePage = ptiCurrent->KeyboardLayout->CodePage;
+        pci->hKL = pDefKL->hkl;
+        pci->CodePage = pDefKL->CodePage;
     }
 
     /* Need to pass the user Startup Information to the current process. */
@@ -688,6 +697,7 @@ error:
 VOID
 UserDisplayNotifyShutdown(PPROCESSINFO ppiCurrent);
 
+// Win: xxxDestroyThreadInfo
 NTSTATUS
 NTAPI
 ExitThreadCallback(PETHREAD Thread)
@@ -697,6 +707,7 @@ ExitThreadCallback(PETHREAD Thread)
     PPROCESSINFO ppiCurrent;
     PEPROCESS Process;
     PTHREADINFO ptiCurrent;
+    PWINDOWLIST pwl, pwlNext;
 
     Process = Thread->ThreadsProcess;
 
@@ -713,6 +724,16 @@ ExitThreadCallback(PETHREAD Thread)
     ASSERT(ppiCurrent);
 
     IsRemoveAttachThread(ptiCurrent);
+
+    if (gpwlList)
+    {
+        for (pwl = gpwlList; pwl; pwl = pwlNext)
+        {
+            pwlNext = pwl->pNextList;
+            if (pwl->pti == ptiCurrent)
+                IntFreeHwndList(pwl);
+        }
+    }
 
     ptiCurrent->TIF_flags |= TIF_DONTATTACHQUEUE;
     ptiCurrent->pClientInfo->dwTIFlags = ptiCurrent->TIF_flags;
@@ -764,6 +785,7 @@ ExitThreadCallback(PETHREAD Thread)
             ASSERT(FALSE);
             return STATUS_UNSUCCESSFUL;
         }
+        UserAssignmentUnlock((PVOID*)&ptiCurrent->spDefaultImc);
 
         if (ppiCurrent && ppiCurrent->ptiList == ptiCurrent && !ptiCurrent->ptiSibling &&
             ppiCurrent->W32PF_flags & W32PF_CLASSESREGISTERED)
@@ -808,8 +830,8 @@ ExitThreadCallback(PETHREAD Thread)
     /* Remove it from the list */
     *ppti = ptiCurrent->ptiSibling;
 
-    if (ptiCurrent->KeyboardLayout)
-        UserDereferenceObject(ptiCurrent->KeyboardLayout);
+    if (!UserAssignmentUnlock((PVOID*)&(ptiCurrent->KeyboardLayout)))
+        ptiCurrent->pClientInfo->hKL = NULL;
 
     if (gptiForeground == ptiCurrent)
     {

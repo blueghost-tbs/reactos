@@ -7,7 +7,7 @@
  *                  Pierre Schweitzer <heis_spiter@hotmail.com>
  *                  Ismael Ferreras Morezuelas <swyterzone+ros@gmail.com>
  *                  Katayama Hirofumi MZ <katayama.hirofumi.mz@gmail.com>
- *                  Oleg Dubinskiy <oleg.dubinskij2013@yandex.ua>
+ *                  Oleg Dubinskiy <oleg.dubinskij30@gmail.com>
  */
 
 /* INCLUDES *****************************************************************/
@@ -20,6 +20,7 @@
 #include <windowsx.h>
 #include <wincon.h>
 #include <shlobj.h>
+#include <shlwapi.h>
 #include <tzlib.h>
 #include <strsafe.h>
 
@@ -2371,14 +2372,14 @@ ProcessPageDlgProc(HWND hwndDlg,
             break;
 
         case PM_ITEM_START:
-            DPRINT1("PM_ITEM_START %lu\n", (ULONG)lParam);
+            DPRINT("PM_ITEM_START %lu\n", (ULONG)lParam);
             SendDlgItemMessage(hwndDlg, IDC_PROCESSPROGRESS, PBM_SETRANGE, 0, MAKELPARAM(0, (ULONG)lParam));
             SendDlgItemMessage(hwndDlg, IDC_PROCESSPROGRESS, PBM_SETPOS, 0, 0);
             SendDlgItemMessage(hwndDlg, IDC_TASKTEXT1 + wParam, WM_SETFONT, (WPARAM)SetupData->hBoldFont, (LPARAM)TRUE);
             break;
 
         case PM_ITEM_END:
-            DPRINT1("PM_ITEM_END\n");
+            DPRINT("PM_ITEM_END\n");
             if (lParam == ERROR_SUCCESS)
             {
             }
@@ -2389,14 +2390,14 @@ ProcessPageDlgProc(HWND hwndDlg,
             break;
 
         case PM_STEP_START:
-            DPRINT1("PM_STEP_START\n");
+            DPRINT("PM_STEP_START\n");
             RegistrationNotify = (PREGISTRATIONNOTIFY)lParam;
             SendDlgItemMessage(hwndDlg, IDC_ITEM, WM_SETTEXT, 0,
                                (LPARAM)((RegistrationNotify->CurrentItem != NULL)? RegistrationNotify->CurrentItem : L""));
             break;
 
         case PM_STEP_END:
-            DPRINT1("PM_STEP_END\n");
+            DPRINT("PM_STEP_END\n");
             RegistrationNotify = (PREGISTRATIONNOTIFY)lParam;
             SendDlgItemMessage(hwndDlg, IDC_PROCESSPROGRESS, PBM_SETPOS, RegistrationNotify->Progress, 0);
             if (RegistrationNotify->LastError != ERROR_SUCCESS)
@@ -2406,7 +2407,7 @@ ProcessPageDlgProc(HWND hwndDlg,
             break;
 
         case PM_ITEMS_DONE:
-            DPRINT1("PM_ITEMS_DONE\n");
+            DPRINT("PM_ITEMS_DONE\n");
             /* Enable the Back and Next buttons */
             PropSheet_SetWizButtons(GetParent(hwndDlg), PSWIZB_NEXT);
             PropSheet_PressButton(GetParent(hwndDlg), PSBTN_NEXT);
@@ -2831,6 +2832,170 @@ ProcessUnattendSection(
     }
 
     RegCloseKey(hKey);
+
+    if (SetupFindFirstLineW(pSetupData->hSetupInf,
+        L"Env",
+        NULL,
+        &InfContext))
+    {
+        if (RegCreateKeyExW(
+                HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", 0, NULL,
+                REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_READ, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        {
+            DPRINT1("Error: failed to open HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\n");
+            return;
+        }
+        do
+        {
+            if (!SetupGetStringFieldW(&InfContext,
+                0,
+                szName,
+                ARRAYSIZE(szName),
+                &LineLength))
+            {
+                DPRINT1("Error: SetupGetStringField failed with %d\n", GetLastError());
+                return;
+            }
+
+            if (!SetupGetStringFieldW(&InfContext,
+                1,
+                szValue,
+                ARRAYSIZE(szValue),
+                &LineLength))
+            {
+                DPRINT1("Error: SetupGetStringField failed with %d\n", GetLastError());
+                return;
+            }
+            DPRINT1("[ENV] %S=%S\n", szName, szValue);
+
+            DWORD dwType = wcschr(szValue, '%') != NULL ? REG_EXPAND_SZ : REG_SZ;
+
+            if (RegSetValueExW(hKey, szName, 0, dwType, (const BYTE*)szValue, (DWORD)(wcslen(szValue) + 1) * sizeof(TCHAR)) != ERROR_SUCCESS)
+            {
+                DPRINT1(" - Error %d\n", GetLastError());
+            }
+
+        } while (SetupFindNextLine(&InfContext, &InfContext));
+
+        RegCloseKey(hKey);
+    }
+}
+
+static BOOL
+PathIsEqual(
+    IN LPCWSTR lpPath1,
+    IN LPCWSTR lpPath2)
+{
+    WCHAR szPath1[MAX_PATH];
+    WCHAR szPath2[MAX_PATH];
+
+    /* If something goes wrong, better return TRUE,
+     * so the calling function returns early.
+     */
+    if (!PathCanonicalizeW(szPath1, lpPath1))
+        return TRUE;
+
+    if (!PathAddBackslashW(szPath1))
+        return TRUE;
+
+    if (!PathCanonicalizeW(szPath2, lpPath2))
+        return TRUE;
+
+    if (!PathAddBackslashW(szPath2))
+        return TRUE;
+
+    return (_wcsicmp(szPath1, szPath2) == 0);
+}
+
+static VOID
+AddInstallationSource(
+    IN HKEY hKey,
+    IN LPWSTR lpPath)
+{
+    LONG res;
+    DWORD dwRegType;
+    DWORD dwPathLength = 0;
+    DWORD dwNewLength = 0;
+    LPWSTR Buffer = NULL;
+    LPWSTR Path;
+
+    res = RegQueryValueExW(
+        hKey,
+        L"Installation Sources",
+        NULL,
+        &dwRegType,
+        NULL,
+        &dwPathLength);
+
+    if (res != ERROR_SUCCESS ||
+        dwRegType != REG_MULTI_SZ ||
+        dwPathLength == 0 ||
+        dwPathLength % sizeof(WCHAR) != 0)
+    {
+        dwPathLength = 0;
+        goto set;
+    }
+
+    /* Reserve space for existing data + new string */
+    dwNewLength = dwPathLength + (wcslen(lpPath) + 1) * sizeof(WCHAR);
+    Buffer = HeapAlloc(GetProcessHeap(), 0, dwNewLength);
+    if (!Buffer)
+        return;
+
+    ZeroMemory(Buffer, dwNewLength);
+
+    res = RegQueryValueExW(
+        hKey,
+        L"Installation Sources",
+        NULL,
+        NULL,
+        (LPBYTE)Buffer,
+        &dwPathLength);
+
+    if (res != ERROR_SUCCESS)
+    {
+        HeapFree(GetProcessHeap(), 0, Buffer);
+        dwPathLength = 0;
+        goto set;
+    }
+
+    /* Sanity check, these should already be zeros */
+    Buffer[dwPathLength / sizeof(WCHAR) - 2] = UNICODE_NULL;
+    Buffer[dwPathLength / sizeof(WCHAR) - 1] = UNICODE_NULL;
+
+    for (Path = Buffer; *Path; Path += wcslen(Path) + 1)
+    {
+        /* Check if path is already added */
+        if (PathIsEqual(Path, lpPath))
+            goto cleanup;
+    }
+
+    Path = Buffer + dwPathLength / sizeof(WCHAR) - 1;
+
+set:
+    if (dwPathLength == 0)
+    {
+        dwNewLength = (wcslen(lpPath) + 1 + 1) * sizeof(WCHAR);
+        Buffer = HeapAlloc(GetProcessHeap(), 0, dwNewLength);
+        if (!Buffer)
+            return;
+
+        Path = Buffer;
+    }
+
+    StringCbCopyW(Path, dwNewLength - (Path - Buffer) * sizeof(WCHAR), lpPath);
+    Buffer[dwNewLength / sizeof(WCHAR) - 1] = UNICODE_NULL;
+
+    RegSetValueExW(
+        hKey,
+        L"Installation Sources",
+        0,
+        REG_MULTI_SZ,
+        (LPBYTE)Buffer,
+        dwNewLength);
+
+cleanup:
+    HeapFree(GetProcessHeap(), 0, Buffer);
 }
 
 VOID
@@ -2931,6 +3096,8 @@ ProcessSetupInf(
                           NULL);
     if (res == ERROR_SUCCESS)
     {
+        AddInstallationSource(hKey, pSetupData->SourcePath);
+
         res = RegSetValueExW(hKey,
                              L"SourcePath",
                              0,

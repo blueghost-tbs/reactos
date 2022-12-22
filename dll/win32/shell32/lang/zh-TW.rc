@@ -3,7 +3,7 @@
  * LICENSE:     LGPL-2.1-or-later (https://spdx.org/licenses/LGPL-2.1-or-later)
  * PURPOSE:     Chinese (Traditional) resource file
  * TRANSLATORS: Copyright 2011 Elton Chung aka MfldElton <elton328@gmail.com>
- *              Copyright 2019 Luo Yufan <njlyf2011@hotmail.com>
+ *              Copyright 2019 Luke Luo <njlyf2011@hotmail.com>
  *              Copyright 2021 Chan Chilung <eason066@gmail.com>
  */
 
@@ -162,7 +162,7 @@ IDD_ABOUT_AUTHORS DIALOGEX 35, 90, 235, 85
 STYLE DS_SHELLFONT | WS_CHILD
 FONT 9, "新細明體"
 BEGIN
-    LTEXT "帶給您 ReactOS 的是：", IDC_STATIC, 0, 0, 180, 10
+    LTEXT "給您帶來 ReactOS 的是：", IDC_STATIC, 0, 0, 180, 10
     LISTBOX IDC_ABOUT_AUTHORS_LISTBOX, 0, 10, 165, 75
 END
 
@@ -319,7 +319,7 @@ BEGIN
     EDITTEXT 14002, 110, 51, 120, 10, ES_LEFT | ES_READONLY | NOT WS_BORDER | NOT WS_TABSTOP
     LTEXT "", -1, 8, 64, 223, 1, SS_ETCHEDHORZ | WS_CHILD | WS_VISIBLE
     CONTROL "", 14013, "Static", SS_SUNKEN | SS_OWNERDRAW, 8, 69, 10, 10
-    LTEXT "已使用的空間：", -1, 25, 69, 80, 10
+    LTEXT "已使用空間：", -1, 25, 69, 80, 10
     EDITTEXT 14003, 110, 69, 86, 10, ES_LEFT | ES_READONLY | NOT WS_BORDER | NOT WS_TABSTOP | ES_AUTOHSCROLL
     EDITTEXT 14004, 197, 69, 33, 10, ES_LEFT | ES_READONLY | NOT WS_BORDER | NOT WS_TABSTOP | ES_AUTOHSCROLL
     CONTROL "", 14014, "Static", SS_SUNKEN | SS_OWNERDRAW, 8, 82, 10, 10
@@ -988,6 +988,11 @@ BEGIN
     IDS_MENU_EMPTY "(空)"
     IDS_OBJECTS "%d 個物件"
     IDS_OBJECTS_SELECTED "已選擇 %d 個物件"
+
+    IDS_TITLE_MYCOMP "我的電腦"
+    IDS_TITLE_MYNET "網路上的芳鄰"
+    IDS_TITLE_BIN_1 "Recycle Bin (full)"
+    IDS_TITLE_BIN_0 "Recycle Bin (empty)"
 
     IDS_ADVANCED_FOLDER "檔案和資料夾"
     IDS_ADVANCED_NET_CRAWLER "自動搜尋網路資料夾和印表機"

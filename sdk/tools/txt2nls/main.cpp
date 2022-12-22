@@ -1,6 +1,6 @@
 /*
  * PROJECT:     ReactOS TXT to NLS Converter
- * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later.html)
+ * LICENSE:     GPL-2.0-or-later (https://spdx.org/licenses/GPL-2.0-or-later)
  * FILE:        sdk/tools/txt2nls/main.c
  * COPYRIGHT:   Copyright 2021 Jérôme Gardou <jerome.gardou@reactos.org>
  */
@@ -541,7 +541,7 @@ int main(int argc, char* argv[])
     output.write(reinterpret_cast<char*>(wc_table), 65536 * FileHeader.MaximumCharacterSize);
 
     output.close();
-    delete wc_table;
+    delete[] wc_table;
 
     return 0;
 }

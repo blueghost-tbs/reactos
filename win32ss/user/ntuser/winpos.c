@@ -379,6 +379,7 @@ BOOL FASTCALL can_activate_window( PWND Wnd OPTIONAL)
     if (!(style & WS_VISIBLE)) return FALSE;
     if (style & WS_MINIMIZE) return FALSE;
     if ((style & (WS_POPUP|WS_CHILD)) == WS_CHILD) return FALSE;
+    if (Wnd->ExStyle & WS_EX_NOACTIVATE) return FALSE;
     return TRUE;
     /* FIXME: This window could be disable because the child that closed
               was a popup. */
@@ -551,6 +552,7 @@ WinPosInitInternalPos(PWND Wnd, RECTL *RestoreRect)
    }
 }
 
+// Win: _GetWindowPlacement
 BOOL
 FASTCALL
 IntGetWindowPlacement(PWND Wnd, WINDOWPLACEMENT *lpwndpl)
@@ -1392,8 +1394,34 @@ WinPosDoOwnedPopups(PWND Window, HWND hWndInsertAfter)
 
                if (List[i] == Owner)
                {
-                  if (i > 0) hWndInsertAfter = List[i-1];
-                  else hWndInsertAfter = topmost ? HWND_TOPMOST : HWND_TOP;
+                  /* We found its Owner, so we must handle it here. */
+                  if (i > 0)
+                  {
+                     if (List[i - 1] != UserHMGetHandle(Window))
+                     {
+                        /*
+                         * If the popup to be inserted is not already just
+                         * before the Owner, insert it there. The modified
+                         * hWndInsertAfter will be handled below.
+                         *
+                         * (NOTE: Do not allow hWndInsertAfter to become equal
+                         * to the popup's window handle, as this would cause
+                         * the popup to link to itself).
+                         */
+                        hWndInsertAfter = List[i - 1];
+                     }
+                     else
+                     {
+                        /* If the popup to be inserted is already
+                         * before the Owner, we are done. */
+                        ExFreePoolWithTag(List, USERTAG_WINDOWLIST);
+                        return hWndInsertAfter;
+                     }
+                  }
+                  else
+                  {
+                     hWndInsertAfter = topmost ? HWND_TOPMOST : HWND_TOP;
+                  }
                   break;
                }
 
@@ -1746,8 +1774,8 @@ co_WinPosSetWindowPos(
 
    ASSERT_REFS_CO(Window);
 
-   TRACE("pwnd %p, after %p, %d,%d (%dx%d), flags 0x%x",
-          Window, WndInsertAfter, x, y, cx, cy, flags);
+   TRACE("pwnd %p, after %p, %d,%d (%dx%d), flags 0x%x\n",
+         Window, WndInsertAfter, x, y, cx, cy, flags);
 #if DBG
    dump_winpos_flags(flags);
 #endif
@@ -1917,9 +1945,12 @@ co_WinPosSetWindowPos(
           (!(Window->ExStyle & WS_EX_TOOLWINDOW) && !Window->spwndOwner &&
            (!Window->spwndParent || UserIsDesktopWindow(Window->spwndParent))))
       {
-         co_IntShellHookNotify(HSHELL_WINDOWCREATED, (WPARAM)Window->head.h, 0);
-         if (!(WinPos.flags & SWP_NOACTIVATE))
-            UpdateShellHook(Window);
+         if (!UserIsDesktopWindow(Window))
+         {
+            co_IntShellHookNotify(HSHELL_WINDOWCREATED, (WPARAM)Window->head.h, 0);
+            if (!(WinPos.flags & SWP_NOACTIVATE))
+               UpdateShellHook(Window);
+         }
       }
 
       Window->style |= WS_VISIBLE; //IntSetStyle( Window, WS_VISIBLE, 0 );
@@ -2103,10 +2134,7 @@ co_WinPosSetWindowPos(
                    IntInvalidateWindows( Parent, DirtyRgn, RDW_ERASE | RDW_INVALIDATE);
                    co_IntPaintWindows(Parent, RDW_NOCHILDREN, FALSE);
                 }
-                else
-                {
-                   IntInvalidateWindows( Window, DirtyRgn, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
-                }
+                IntInvalidateWindows(Window, DirtyRgn, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
              }
              else if ( RgnType != ERROR && RgnType == NULLREGION ) // Must be the same. See CORE-7166 & CORE-15934, NC HACK fix.
              {
@@ -2487,6 +2515,7 @@ co_WinPosMinMaximize(PWND Wnd, UINT ShowFlag, RECT* NewPos)
 
 /*
    ShowWindow does not set SWP_FRAMECHANGED!!! Fix wine msg test_SetParent:WmSetParentSeq_2:23 wParam bits!
+   Win: xxxShowWindow
  */
 BOOLEAN FASTCALL
 co_WinPosShowWindow(PWND Wnd, INT Cmd)

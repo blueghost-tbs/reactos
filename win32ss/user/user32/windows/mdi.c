@@ -145,7 +145,7 @@ HWND* WIN_ListChildren (HWND hWndparent)
   HANDLE hHeap;
   NTSTATUS Status;
 
-  Status = NtUserBuildHwndList ( NULL, hWndparent, FALSE, 0, 0, NULL, &dwCount );
+  Status = NtUserBuildHwndList(NULL, hWndparent, FALSE, 0, dwCount, NULL, &dwCount);
 
   if ( !NT_SUCCESS( Status ) )
     return 0;
@@ -161,7 +161,7 @@ HWND* WIN_ListChildren (HWND hWndparent)
     }
 
   /* now call kernel again to fill the buffer this time */
-  Status = NtUserBuildHwndList (NULL, hWndparent, FALSE, 0, 0, pHwnd, &dwCount );
+  Status = NtUserBuildHwndList(NULL, hWndparent, FALSE, 0, dwCount, pHwnd, &dwCount);
 
   if ( !NT_SUCCESS( Status ) )
     {
@@ -919,7 +919,6 @@ static BOOL MDI_AugmentFrameMenu( HWND frame, HWND hChild )
     {
       HDC hMemDC;
       HBITMAP hBitmap, hOldBitmap;
-      HBRUSH hBrush;
       HDC hdc = GetDC(hChild);
 
       if (hdc)
@@ -931,10 +930,8 @@ static BOOL MDI_AugmentFrameMenu( HWND frame, HWND hChild )
         hBitmap = CreateCompatibleBitmap(hdc, cx, cy);
         hOldBitmap = SelectObject(hMemDC, hBitmap);
         SetMapMode(hMemDC, MM_TEXT);
-        hBrush = CreateSolidBrush(GetSysColor(COLOR_MENU));
-        DrawIconEx(hMemDC, 0, 0, hIcon, cx, cy, 0, hBrush, DI_NORMAL);
+        DrawIconEx(hMemDC, 0, 0, hIcon, cx, cy, 0, GetSysColorBrush(COLOR_MENU), DI_NORMAL);
         SelectObject (hMemDC, hOldBitmap);
-        DeleteObject(hBrush);
         DeleteDC(hMemDC);
         ReleaseDC(hChild, hdc);
         hSysMenuBitmap = hBitmap;

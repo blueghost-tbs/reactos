@@ -31,10 +31,10 @@ void __RPC_USER midl_user_free(void __RPC_FAR * ptr)
 DWORD
 StartRpcServer(VOID)
 {
-    ULONG Status;
+    NTSTATUS Status;
 
-    Status = ((LPSTART_RPC_SERVER)lpServiceGlobals->RpcpStartRpcServer)(L"seclogon", ISeclogon_v1_0_s_ifspec);
-    TRACE("RpcpStartRpcServer returned 0x%08lx\n", Status);
+    Status = lpServiceGlobals->StartRpcServer(L"seclogon", ISeclogon_v1_0_s_ifspec);
+    TRACE("StartRpcServer returned 0x%08lx\n", Status);
 
     return RtlNtStatusToDosError(Status);
 }
@@ -43,10 +43,10 @@ StartRpcServer(VOID)
 DWORD
 StopRpcServer(VOID)
 {
-    ULONG Status;
+    NTSTATUS Status;
 
-    Status = ((LPSTOP_RPC_SERVER)lpServiceGlobals->RpcpStopRpcServer)(ISeclogon_v1_0_s_ifspec);
-    TRACE("RpcpStopRpcServer returned 0x%08lx\n", Status);
+    Status = lpServiceGlobals->StopRpcServer(ISeclogon_v1_0_s_ifspec);
+    TRACE("StopRpcServer returned 0x%08lx\n", Status);
 
     return RtlNtStatusToDosError(Status);
 }
@@ -59,6 +59,16 @@ SeclCreateProcessWithLogonW(
     _In_ SECL_REQUEST *pRequest,
     _Out_ SECL_RESPONSE *pResponse)
 {
+    STARTUPINFOW StartupInfo;
+    PROCESS_INFORMATION ProcessInfo;
+
+    PROFILEINFOW ProfileInfo;
+    HANDLE hToken = NULL;
+    HANDLE hTargetProcessHandle = NULL;
+
+    ULONG dwError = ERROR_SUCCESS;
+    BOOL rc;
+
     TRACE("SeclCreateProcessWithLogonW(%p %p %p)\n", hBinding, pRequest, pResponse);
 
     if (pRequest != NULL)
@@ -69,12 +79,118 @@ SeclCreateProcessWithLogonW(
         TRACE("ApplicationName: '%S'\n", pRequest->ApplicationName);
         TRACE("CommandLine: '%S'\n", pRequest->CommandLine);
         TRACE("CurrentDirectory: '%S'\n", pRequest->CurrentDirectory);
+        TRACE("LogonFlags: 0x%lx\n", pRequest->dwLogonFlags);
+        TRACE("CreationFlags: 0x%lx\n", pRequest->dwCreationFlags);
+        TRACE("ProcessId: %lu\n", pRequest->dwProcessId);
     }
 
-    /* FIXME: Logon */
+    hTargetProcessHandle = OpenProcess(PROCESS_DUP_HANDLE,
+                                       FALSE,
+                                       pRequest->dwProcessId);
+    if (hTargetProcessHandle == NULL)
+    {
+        dwError = GetLastError();
+        WARN("OpenProcess() failed with Error %lu\n", dwError);
+        goto done;
+    }
 
-    /* FIXME: Create Process */
+    ZeroMemory(&ProfileInfo, sizeof(ProfileInfo));
+
+    /* Logon */
+    rc = LogonUser(pRequest->Username,
+                   pRequest->Domain,
+                   pRequest->Password,
+                   LOGON32_LOGON_INTERACTIVE,
+                   LOGON32_PROVIDER_DEFAULT,
+                   &hToken);
+    if (rc == FALSE)
+    {
+        dwError = GetLastError();
+        WARN("LogonUser() failed with Error %lu\n", dwError);
+        goto done;
+    }
+
+    /* Load the user profile */
+    if (pRequest->dwLogonFlags & LOGON_WITH_PROFILE)
+    {
+        ProfileInfo.dwSize = sizeof(ProfileInfo);
+        ProfileInfo.lpUserName = pRequest->Username;
+
+        rc = LoadUserProfileW(hToken,
+                              &ProfileInfo);
+        if (rc == FALSE)
+        {
+            dwError = GetLastError();
+            WARN("LoadUserProfile() failed with Error %lu\n", dwError);
+            goto done;
+        }
+    }
+
+    ZeroMemory(&StartupInfo, sizeof(StartupInfo));
+    StartupInfo.cb = sizeof(StartupInfo);
+
+    /* FIXME: Get startup info from the caller */
+
+    ZeroMemory(&ProcessInfo, sizeof(ProcessInfo));
+
+    /* Create Process */
+    rc = CreateProcessAsUserW(hToken,
+                              pRequest->ApplicationName,
+                              pRequest->CommandLine,
+                              NULL,  // lpProcessAttributes,
+                              NULL,  // lpThreadAttributes,
+                              FALSE, // bInheritHandles,
+                              pRequest->dwCreationFlags,
+                              NULL,  // lpEnvironment,
+                              pRequest->CurrentDirectory,
+                              &StartupInfo,
+                              &ProcessInfo);
+    if (rc == FALSE)
+    {
+        dwError = GetLastError();
+        WARN("CreateProcessAsUser() failed with Error %lu\n", dwError);
+        goto done;
+    }
+
+    /* Return process info to the caller */
+    if (pResponse != NULL)
+    {
+        DuplicateHandle(GetCurrentProcess(),
+                        ProcessInfo.hProcess,
+                        hTargetProcessHandle,
+                        (PHANDLE)&pResponse->hProcess,
+                        0,
+                        FALSE,
+                        DUPLICATE_SAME_ACCESS);
+
+        DuplicateHandle(GetCurrentProcess(),
+                        ProcessInfo.hThread,
+                        hTargetProcessHandle,
+                        (PHANDLE)&pResponse->hThread,
+                        0,
+                        FALSE,
+                        DUPLICATE_SAME_ACCESS);
+
+        pResponse->dwProcessId = ProcessInfo.dwProcessId;
+        pResponse->dwThreadId = ProcessInfo.dwThreadId;
+    }
+
+done:
+    if (hTargetProcessHandle)
+        CloseHandle(hTargetProcessHandle);
+
+    if (ProcessInfo.hThread)
+        CloseHandle(ProcessInfo.hThread);
+
+    if (ProcessInfo.hProcess)
+        CloseHandle(ProcessInfo.hProcess);
+
+    if (ProfileInfo.hProfile != NULL)
+        UnloadUserProfile(hToken, ProfileInfo.hProfile);
+
+    if (hToken != NULL)
+        CloseHandle(hToken);
 
     if (pResponse != NULL)
-        pResponse->ulError = 4;
+        pResponse->dwError = dwError;
 }

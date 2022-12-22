@@ -251,30 +251,36 @@ PlaySoundRoutine(
     BOOL Ret = FALSE;
 
     hLibrary = LoadLibraryW(L"winmm.dll");
-    if (hLibrary)
+    if (!hLibrary)
+        return FALSE;
+
+    waveOutGetNumDevs = (WAVEOUTGETNUMDEVS)GetProcAddress(hLibrary, "waveOutGetNumDevs");
+    Play = (PLAYSOUNDW)GetProcAddress(hLibrary, "PlaySoundW");
+
+    _SEH2_TRY
     {
-        waveOutGetNumDevs = (WAVEOUTGETNUMDEVS)GetProcAddress(hLibrary, "waveOutGetNumDevs");
         if (waveOutGetNumDevs)
         {
             NumDevs = waveOutGetNumDevs();
             if (!NumDevs)
             {
                 if (!bLogon)
-                {
-                    Beep(500, 500);
-                }
-                FreeLibrary(hLibrary);
-                return FALSE;
+                    Beep(440, 125);
+                _SEH2_LEAVE;
             }
         }
 
-        Play = (PLAYSOUNDW)GetProcAddress(hLibrary, "PlaySoundW");
         if (Play)
-        {
             Ret = Play(FileName, NULL, Flags);
-        }
-        FreeLibrary(hLibrary);
     }
+    _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
+    {
+        ERR("WL: Exception while playing sound '%S', Status 0x%08lx\n",
+            FileName ? FileName : L"(n/a)", _SEH2_GetExceptionCode());
+    }
+    _SEH2_END;
+
+    FreeLibrary(hLibrary);
 
     return Ret;
 }
@@ -428,87 +434,6 @@ PlayLogonSound(
         CloseHandle(hThread);
 }
 
-static BOOL
-AllowWinstaAccess(PWLSESSION Session)
-{
-    BOOL bSuccess = FALSE;
-    DWORD dwIndex;
-    DWORD dwLength = 0;
-    PTOKEN_GROUPS ptg = NULL;
-    PSID psid;
-    TOKEN_STATISTICS Stats;
-    DWORD cbStats;
-    DWORD ret;
-
-    // Get required buffer size and allocate the TOKEN_GROUPS buffer.
-
-    if (!GetTokenInformation(Session->UserToken,
-                             TokenGroups,
-                             ptg,
-                             0,
-                             &dwLength))
-    {
-        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-            return FALSE;
-
-        ptg = (PTOKEN_GROUPS)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, dwLength);
-        if (ptg == NULL)
-            return FALSE;
-    }
-
-    // Get the token group information from the access token.
-    if (!GetTokenInformation(Session->UserToken,
-                             TokenGroups,
-                             ptg,
-                             dwLength,
-                             &dwLength))
-    {
-        goto Cleanup;
-    }
-
-    // Loop through the groups to find the logon SID.
-
-    for (dwIndex = 0; dwIndex < ptg->GroupCount; dwIndex++)
-    {
-        if ((ptg->Groups[dwIndex].Attributes & SE_GROUP_LOGON_ID)
-            == SE_GROUP_LOGON_ID)
-        {
-            psid = ptg->Groups[dwIndex].Sid;
-            break;
-        }
-    }
-
-    dwLength = GetLengthSid(psid);
-
-    if (!GetTokenInformation(Session->UserToken,
-                             TokenStatistics,
-                             &Stats,
-                             sizeof(TOKEN_STATISTICS),
-                             &cbStats))
-    {
-        WARN("Couldn't get Authentication id from user token!\n");
-        goto Cleanup;
-    }
-
-    AddAceToWindowStation(Session->InteractiveWindowStation, psid);
-
-    ret = SetWindowStationUser(Session->InteractiveWindowStation,
-                               &Stats.AuthenticationId,
-                               psid,
-                               dwLength);
-    TRACE("SetWindowStationUser returned 0x%x\n", ret);
-
-    bSuccess = TRUE;
-
-Cleanup:
-
-    // Free the buffer for the token groups.
-    if (ptg != NULL)
-        HeapFree(GetProcessHeap(), 0, (LPVOID)ptg);
-
-    return bSuccess;
-}
-
 static
 VOID
 RestoreAllConnections(PWLSESSION Session)
@@ -633,7 +558,12 @@ HandleLogon(
         goto cleanup;
     }
 
-    AllowWinstaAccess(Session);
+    /* Allow winsta and desktop access for this session */
+    if (!AllowAccessOnSession(Session))
+    {
+        WARN("WL: AllowAccessOnSession() failed to give winsta & desktop access for this session\n");
+        goto cleanup;
+    }
 
     /* Connect remote resources */
     RestoreAllConnections(Session);

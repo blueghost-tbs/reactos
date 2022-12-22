@@ -114,13 +114,21 @@ NtUserCallNoParam(DWORD Routine)
             break;
         }
 
+        case NOPARAM_ROUTINE_GETIMESHOWSTATUS:
+            Result = !!gfIMEShowStatus;
+            break;
+
         /* this is a ReactOS only case and is needed for gui-on-demand */
         case NOPARAM_ROUTINE_ISCONSOLEMODE:
             Result = (ScreenDeviceContext == NULL);
             break;
 
         case NOPARAM_ROUTINE_UPDATEPERUSERIMMENABLING:
-            gpsi->dwSRVIFlags |= SRVINFO_IMM32; // Always set.
+            if (UserIsIMMEnabled())
+                gpsi->dwSRVIFlags |= SRVINFO_IMM32;
+            else
+                gpsi->dwSRVIFlags &= ~SRVINFO_IMM32;
+
             Result = TRUE; // Always return TRUE.
             break;
 
@@ -662,7 +670,7 @@ NtUserCallHwndLock(
             break;
 
         case HWNDLOCK_ROUTINE_CHECKIMESHOWSTATUSINTHRD:
-            // TODO:
+            IntCheckImeShowStatusInThread(Window);
             break;
     }
 
@@ -895,11 +903,10 @@ NtUserCallHwndParamLock(
 
     switch (Routine)
     {
-        case X_ROUTINE_IMESHOWSTATUSCHANGE:
-        {
-            // TODO:
+        case TWOPARAM_ROUTINE_IMESHOWSTATUSCHANGE:
+            Ret = IntBroadcastImeShowStatusChange(Window, !!Param);
             break;
-        }
+
         case TWOPARAM_ROUTINE_VALIDATERGN:
         {
             PREGION Rgn = REGION_LockRgn((HRGN)Param);

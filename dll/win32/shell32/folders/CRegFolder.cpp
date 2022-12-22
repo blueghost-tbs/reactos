@@ -82,6 +82,11 @@ HRESULT CALLBACK RegFolderContextMenuCallback(IShellFolder *psf,
         if (!SH_ShowRecycleBinProperties(L'C'))
             hr = E_FAIL;
     }
+    else
+    {
+        /* Tell the caller to run the default action */
+        hr = S_FALSE;
+    }
 
     SHFree(pidlFolder);
     _ILFreeaPidl(apidl, cidl);
@@ -205,6 +210,14 @@ class CRegFolderEnum :
         BEGIN_COM_MAP(CRegFolderEnum)
         COM_INTERFACE_ENTRY_IID(IID_IEnumIDList, IEnumIDList)
         END_COM_MAP()
+};
+
+enum registry_columns
+{
+    REGISTRY_COL_NAME,
+    REGISTRY_COL_TYPE,
+    REGISTRY_COL_VALUE,
+    REGISTRY_COL_COUNT,
 };
 
 CRegFolderEnum::CRegFolderEnum()
@@ -718,7 +731,7 @@ HRESULT WINAPI CRegFolder::GetDefaultColumn(DWORD dwRes, ULONG *pSort, ULONG *pD
 
 HRESULT WINAPI CRegFolder::GetDefaultColumnState(UINT iColumn, DWORD *pcsFlags)
 {
-    if (iColumn >= 2)
+    if (iColumn >= REGISTRY_COL_COUNT)
         return E_INVALIDARG;
     *pcsFlags = SHCOLSTATE_TYPE_STR | SHCOLSTATE_ONBYDEFAULT;
     return S_OK;
@@ -742,19 +755,13 @@ HRESULT WINAPI CRegFolder::GetDetailsOf(PCUITEMID_CHILD pidl, UINT iColumn, SHEL
         return E_INVALIDARG;
     }
 
-    if (iColumn >= 3)
-    {
-        /* Return an empty string when we area asked for a column we don't support.
-           Only  the regfolder is supposed to do this as it supports less columns compared to other folder
-           and its contents are supposed to be presented alongside items that support more columns. */
-        return SHSetStrRet(&psd->str, "");
-    }
-
     switch(iColumn)
     {
-        case 0:        /* name */
+        case REGISTRY_COL_NAME:
             return GetDisplayNameOf(pidl, SHGDN_NORMAL | SHGDN_INFOLDER, &psd->str);
-        case 1:        /* comments */
+        case REGISTRY_COL_TYPE:
+            return SHSetStrRet(&psd->str, IDS_SYSTEMFOLDER);
+        case REGISTRY_COL_VALUE:
             HKEY hKey;
             if (!HCR_RegOpenClassIDKey(*clsid, &hKey))
                 return SHSetStrRet(&psd->str, "");
@@ -764,8 +771,11 @@ HRESULT WINAPI CRegFolder::GetDetailsOf(PCUITEMID_CHILD pidl, UINT iColumn, SHEL
             RegLoadMUIStringA(hKey, "InfoTip", psd->str.cStr, MAX_PATH, NULL, 0, NULL);
             RegCloseKey(hKey);
             return S_OK;
-        case 2:        /* type */
-            return SHSetStrRet(&psd->str, IDS_SYSTEMFOLDER);
+        default:
+            /* Return an empty string when we area asked for a column we don't support.
+               Only  the regfolder is supposed to do this as it supports less columns compared to other folder
+               and its contents are supposed to be presented alongside items that support more columns. */
+            return SHSetStrRet(&psd->str, "");
     }
     return E_FAIL;
 }

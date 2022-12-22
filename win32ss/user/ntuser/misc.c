@@ -35,6 +35,7 @@ _scwprintf(
 
 /*
  * Test the Thread to verify and validate it. Hard to the core tests are required.
+ * Win: PtiFromThreadId
  */
 PTHREADINFO
 FASTCALL
@@ -248,8 +249,8 @@ NtUserGetThreadState(
 
    switch (Routine)
    {
-      case THREADSTATE_GETTHREADINFO: /* FIXME: Delete this HACK */
-         GetW32ThreadInfo();
+      case THREADSTATE_GETTHREADINFO:
+         ret = TRUE;
          break;
       case THREADSTATE_FOCUSWINDOW:
          ret = (DWORD_PTR)IntGetThreadFocusWindow();
@@ -334,11 +335,8 @@ NtUserGetThreadState(
       case THREADSTATE_ISWINLOGON2:
          ret = (gpidLogon == PsGetCurrentProcessId());
          break;
-      case THREADSTATE_UNKNOWN17:
+      case THREADSTATE_CHECKCONIME:
          /* FIXME */
-         break;
-      case THREADSTATE_UNKNOWN18:
-         ret = TRUE;
          break;
    }
 

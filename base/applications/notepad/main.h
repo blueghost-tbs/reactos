@@ -40,7 +40,8 @@ typedef enum
     ENCODING_ANSI    =  0,
     ENCODING_UTF16LE =  1,
     ENCODING_UTF16BE =  2,
-    ENCODING_UTF8    =  3
+    ENCODING_UTF8    =  3,
+    ENCODING_UTF8BOM =  4
 } ENCODING;
 
 // #define MIN_ENCODING   0
@@ -80,6 +81,7 @@ typedef struct
     FINDREPLACE find;
     WNDPROC EditProc;
     RECT main_rect;
+    BOOL bWasModified;
 } NOTEPAD_GLOBALS;
 
 extern NOTEPAD_GLOBALS Globals;

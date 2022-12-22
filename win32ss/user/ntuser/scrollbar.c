@@ -497,13 +497,14 @@ co_IntSetScrollInfo(PWND Window, INT nBar, LPCSCROLLINFO lpsi, BOOL bRedraw)
    static DWORD PrevPos[3] = { 0 };
    static DWORD PrevMax[3] = { 0 };
    static INT PrevAction[3] = { 0 };
+   BOOL bVisible;
 
    ASSERT_REFS_CO(Window);
 
    if(!SBID_IS_VALID(nBar)) /* Assures nBar is 0, 1, or 2 */
    {
       EngSetLastError(ERROR_INVALID_PARAMETER);
-      ERR("Trying to set scrollinfo for unknown scrollbar type %d", nBar);
+      ERR("Trying to set scrollinfo for unknown scrollbar type %d\n", nBar);
       return FALSE;
    }
 
@@ -527,6 +528,11 @@ co_IntSetScrollInfo(PWND Window, INT nBar, LPCSCROLLINFO lpsi, BOOL bRedraw)
    psbi = IntGetScrollbarInfoFromWindow(Window, nBar);
    Info = IntGetScrollInfoFromWindow(Window, nBar);
    pSBData = IntGetSBData(Window, nBar);
+
+   if (lpsi->fMask & SIF_THEMED && !(Info->fMask & SIF_THEMED))
+   {
+       Info->fMask |= SIF_THEMED;
+   }
 
    /* Set the page size */
    if (lpsi->fMask & SIF_PAGE)
@@ -658,9 +664,26 @@ co_IntSetScrollInfo(PWND Window, INT nBar, LPCSCROLLINFO lpsi, BOOL bRedraw)
       if ( action & SA_SSI_SHOW )
          if ( co_UserShowScrollBar(Window, nBar, TRUE, TRUE) )
             return lpsi->fMask & SIF_PREVIOUSPOS ? OldPos : pSBData->pos; /* SetWindowPos() already did the painting */
-      if (bRedraw)
+
+      switch (nBar)
       {
-         if (!(lpsi->fMask & SIF_THEMED)) /* Not Using Themes */
+         case SB_HORZ:
+            bVisible = (Window->style & WS_HSCROLL);
+            break;
+         case SB_VERT:
+            bVisible = (Window->style & WS_VSCROLL);
+            break;
+         case SB_CTL:
+            bVisible = (Window->style & WS_VISIBLE);
+            break;
+         default:
+            bVisible = FALSE;
+            break;
+      }
+
+      if (bRedraw && bVisible)
+      {
+         if (!(Info->fMask & SIF_THEMED)) /* Not Using Themes */
          {
             TRACE("Not using themes.\n");
             if (action & SA_SSI_REPAINT_ARROWS)
@@ -1404,7 +1427,7 @@ NtUserEnableScrollBar(
    if(wSBflags != SB_BOTH && !SBID_IS_VALID(wSBflags))
    {
       EngSetLastError(ERROR_INVALID_PARAMETER);
-      ERR("Trying to set scrollinfo for unknown scrollbar type %u", wSBflags);
+      ERR("Trying to set scrollinfo for unknown scrollbar type %u\n", wSBflags);
       RETURN(FALSE);
    }
 
