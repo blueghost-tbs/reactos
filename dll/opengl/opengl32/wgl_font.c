@@ -198,12 +198,25 @@ static void fixed_to_double(POINTFX fixed, UINT em_size, GLdouble vertex[3])
     vertex[2] = 0.0;
 }
 
+#define VERTEX_BUFFER_SIZE 40
+GLenum vertex_type;
+GLdouble vertex_buffer[VERTEX_BUFFER_SIZE * 3] = {0,};
+int vertex_buffer_index = 0;
+
 static void WINAPI tess_callback_vertex(GLvoid *vertex)
 {
     const GLDISPATCHTABLE * funcs = IntGetCurrentDispatchTable();
     GLdouble *dbl = vertex;
     TRACE("%f, %f, %f\n", dbl[0], dbl[1], dbl[2]);
     funcs->Vertex3dv(vertex);
+    if (vertex_buffer_index >= VERTEX_BUFFER_SIZE) {
+        WARN("vertex buffer is too small");
+    } else {
+        vertex_buffer[vertex_buffer_index * 3] = dbl[0];
+        vertex_buffer[vertex_buffer_index * 3 + 1] = dbl[1];
+        vertex_buffer[vertex_buffer_index * 3 + 2] = dbl[2] - 0.2;
+        vertex_buffer_index++;
+    }
 }
 
 static void WINAPI tess_callback_begin(GLenum which)
@@ -211,6 +224,8 @@ static void WINAPI tess_callback_begin(GLenum which)
     const GLDISPATCHTABLE * funcs = IntGetCurrentDispatchTable();
     TRACE("%d\n", which);
     funcs->Begin(which);
+    vertex_type = which;
+    vertex_buffer_index = 0;
 }
 
 static void WINAPI tess_callback_end(void)
@@ -218,6 +233,17 @@ static void WINAPI tess_callback_end(void)
     const GLDISPATCHTABLE * funcs = IntGetCurrentDispatchTable();
     TRACE("\n");
     funcs->End();
+
+    funcs->FrontFace(GL_CW);
+    funcs->Normal3d(0.0, 0.0, -1.0);
+    funcs->Begin(vertex_type);
+    for (int i = 0; i < vertex_buffer_index; i++)
+    {
+        funcs->Vertex3dv(vertex_buffer + (i * 3));
+    }
+    funcs->End();
+    funcs->Normal3d(0.0, 0.0, 1.0);
+    funcs->FrontFace(GL_CCW);
 }
 
 typedef struct _bezier_vector {

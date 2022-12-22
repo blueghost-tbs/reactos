@@ -149,6 +149,9 @@ GLvoid InitGL(GLsizei Width, GLsizei Height)
     // Enables Clearing Of The Depth Buffer
     glClearDepth(1.0);
 
+    // Enables backface culling
+    glEnable(GL_CULL_FACE);
+
     // The Type Of Depth Test To Do
     glDepthFunc(GL_LESS);
 
