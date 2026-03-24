@@ -191,11 +191,11 @@ static HMODULE load_libglu(void)
     return module;
 }
 
-static void fixed_to_double(POINTFX fixed, UINT em_size, GLdouble vertex[3])
+static void fixed_to_double(POINTFX fixed, UINT em_size, GLdouble vertex[3], float extrusion)
 {
     vertex[0] = (fixed.x.value + (GLdouble)fixed.x.fract / (1 << 16)) / em_size;  
     vertex[1] = (fixed.y.value + (GLdouble)fixed.y.fract / (1 << 16)) / em_size;  
-    vertex[2] = 0.0;
+    vertex[2] = extrusion;
 }
 
 static void WINAPI tess_callback_vertex(GLvoid *vertex)
@@ -288,6 +288,141 @@ static int bezier_approximate(const bezier_vector *p, bezier_vector *points, FLO
     return total_vertices;
 }
 
+static void calc_normal(GLdouble v1[3], float extrusion, GLdouble normal[3])
+{
+    normal[0] = v1[1] * extrusion;
+    normal[1] = -v1[0] * extrusion;
+
+    float r = sqrt(normal[0] * normal[0] + normal[1] * normal[1]);
+    if (r == 0.0)
+        return;
+
+    normal[0] /= r;
+    normal[1] /= r;
+    normal[2] = 0.0;
+}
+
+static void draw_side_faces(GLdouble *vertices_start, GLdouble *vertices_end, float extrusion)
+{
+    const GLDISPATCHTABLE *funcs = IntGetCurrentDispatchTable();
+
+    if (vertices_start == NULL || vertices_end == NULL)
+        return;
+
+    GLdouble *normals_start = HeapAlloc(GetProcessHeap(), 0, (vertices_end - vertices_start) * sizeof(GLdouble));
+    GLdouble v[3] = {0.0,};
+    GLdouble *vs = vertices_start;
+    GLdouble *ns = normals_start;
+    GLdouble *normal = normals_start;
+
+    // Calculate face normals
+    for (GLdouble *vertices = vertices_start; vertices != vertices_end; vertices += 3)
+    {
+        if (vertices[0] == DBL_MAX)
+        {
+            vs = vertices + 3;
+            normal[0] = DBL_MAX;
+            normal[1] = DBL_MAX;
+            normal[2] = DBL_MAX;
+        }
+        else if (vertices[3] == DBL_MAX)
+        {
+            v[0] = vertices[0] - vs[0];
+            v[1] = vertices[1] - vs[1];
+            v[2] = vertices[2] - vs[2];
+            calc_normal(v, extrusion, normal);
+        }
+        else
+        {
+            v[0] = vertices[0] - vertices[3];
+            v[1] = vertices[1] - vertices[4];
+            v[2] = vertices[2] - vertices[5];
+            calc_normal(v, extrusion, normal);
+        }
+        normal += 3;
+    }
+
+    // TODO: GL_QUAD_STRIP-pel egyszerűbb lenne
+    funcs->Begin(GL_QUADS);
+
+    vs = vertices_start;
+    ns = normals_start;
+    GLdouble *normal1, *normal2, *normal3, *vertex1, *vertex2;
+
+    normal = normals_start;
+    int count = 1;
+    DPRINTF("------ obj start ------\n");
+    for (GLdouble *vertices = vertices_start + 3; vertices != vertices_end; vertices += 3, normal += 3)
+    {
+        // Skip the quad end marker
+        if (normal[0] == DBL_MAX) {
+            normal += 3;
+            vertices += 3;
+        }
+
+        // Set pointers
+        if (vertices[3] == DBL_MAX)
+        {
+            /*vertex1 = vertices;
+            vertex2 = vs;
+            normal1 = normal;
+            normal2 = normal + 3;
+            normal3 = ns;*/
+            /* Skip the next to last. */
+            continue;
+        }
+        else if (vertices[0] == DBL_MAX)
+        {
+            vertex1 = vs;
+            vertex2 = vs + 3;
+            normal1 = normal;
+            normal2 = ns;
+            normal3 = ns + 3;
+            // After this starts the next segment
+            vs = vertices + 3;
+            ns = normal + 6;
+        }
+        else
+        {
+            vertex1 = vertices;
+            vertex2 = vertices + 3;
+            normal1 = normal;
+            normal2 = normal + 3;
+            normal3 = normal + 6;
+        }
+
+        // Average normals
+        v[0] = (normal1[0] + normal2[0]) / 2.0;
+        v[1] = (normal1[1] + normal2[1]) / 2.0;
+        funcs->Normal3d(v[0], v[1], 0.0);
+        DPRINTF("vn %f %f %f\n", v[0], v[1], 0.0);
+        DPRINTF("vn %f %f %f\n", v[0], v[1], 0.0);
+        funcs->Vertex3d(vertex1[0], vertex1[1], vertex1[2] - extrusion);
+        DPRINTF("v %f %f %f\n", vertex1[0], vertex1[1], vertex1[2] - extrusion);
+        funcs->Vertex3dv(vertex1);
+        DPRINTF("v %f %f %f\n", vertex1[0], vertex1[1], vertex1[2]);
+
+        // Average normals
+        v[0] = (normal2[0] + normal3[0]) / 2.0;
+        v[1] = (normal2[1] + normal3[1]) / 2.0;
+        funcs->Normal3d(v[0], v[1], 0.0);
+        DPRINTF("vn %f %f %f\n", v[0], v[1], 0.0);
+        DPRINTF("vn %f %f %f\n", v[0], v[1], 0.0);
+        funcs->Vertex3dv(vertex2);
+        DPRINTF("v %f %f %f\n", vertex2[0], vertex2[1], vertex2[2]);
+        funcs->Vertex3d(vertex2[0], vertex2[1], vertex2[2] - extrusion);
+        DPRINTF("v %f %f %f\n", vertex2[0], vertex2[1], vertex2[2] - extrusion);
+        DPRINTF("f %d//%d %d//%d %d//%d %d//%d\n", count, count, count + 1, count + 1, count + 2, count + 2, count + 3, count + 3);
+        count += 4;
+    }
+    DPRINTF("------ obj end ------\n");
+
+    funcs->End();
+
+    if (normals_start)
+        HeapFree(GetProcessHeap(), 0, normals_start);
+}
+
 /***********************************************************************
  *		wglUseFontOutlines_common
  */
@@ -347,8 +482,9 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
         BYTE *buf;
         TTPOLYGONHEADER *pph;
         TTPOLYCURVE *ppc;
-        GLdouble *vertices = NULL, *vertices_temp = NULL;
+        GLdouble *vertices = NULL, *vertices_frontface = NULL, *vertices_backface = NULL;
         int vertex_total = -1;
+        int front_side = 1;
 
         if(unicode)
             needed = GetGlyphOutlineW(hdc, glyph, GGO_NATIVE, &gm, 0, NULL, &identity);
@@ -389,21 +525,34 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
         if(format == WGL_FONT_POLYGONS)
         {
             funcs->Normal3d(0.0, 0.0, 1.0);
-            pgluTessNormal(tess, 0, 0, 1);
+            pgluTessNormal(tess, 0, 0, -1);
             pgluTessBeginPolygon(tess, NULL);
         }
 
-        while(!vertices)
+        while ((!vertices_frontface) || ((!vertices_backface) && (extrusion > 0.0)))
         {
-            if(vertex_total != -1)
-                vertices_temp = vertices = HeapAlloc(GetProcessHeap(), 0, vertex_total * 3 * sizeof(GLdouble));
+            // At start, this is not allocating the vertices array (vertex_total is -1).
+            // This whole stuff runs twice, or 3 times in case of an extrusion.
+            // First it counts the vertices in vertex_total to know how much memory is needed,
+            // then the second time it is allocated and filled.
+            // At every countour end a closing [DBL_MAX, DBL_MAX, DBL_MAX] vertex is inserted to mark the end of the quad sequence.
+            // This list is also used in draw_side_faces().
+            if (vertex_total != -1) {
+                if (front_side)
+                    vertices_frontface = vertices = HeapAlloc(GetProcessHeap(), 0, vertex_total * 3 * sizeof(GLdouble));
+                else
+                    vertices_backface = vertices = HeapAlloc(GetProcessHeap(), 0, vertex_total * 3 * sizeof(GLdouble));
+            }
             vertex_total = 0;
 
             pph = (TTPOLYGONHEADER*)buf;
-            while((BYTE*)pph < buf + needed)
+
+            // This while loop walks trough the countours, 'buf' contains the glyph outline,
+            // 'needed' is the full size, and 'pph' is the current countour.
+            while((BYTE*)pph < buf + needed) 
             {
                 GLdouble previous[3];
-                fixed_to_double(pph->pfxStart, em_size, previous);
+                fixed_to_double(pph->pfxStart, em_size, previous, (front_side ? 0.0 : extrusion));
 
                 if(vertices)
                     TRACE("\tstart %d, %d\n", pph->pfxStart.x.value, pph->pfxStart.y.value);
@@ -415,7 +564,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
 
                 if(vertices)
                 {
-                    fixed_to_double(pph->pfxStart, em_size, vertices);
+                    fixed_to_double(pph->pfxStart, em_size, vertices, (front_side ? 0.0 : extrusion));
                     if(format == WGL_FONT_POLYGONS)
                         pgluTessVertex(tess, vertices, vertices);
                     else
@@ -438,14 +587,14 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                             {
                                 TRACE("\t\tline to %d, %d\n",
                                       ppc->apfx[i].x.value, ppc->apfx[i].y.value);
-                                fixed_to_double(ppc->apfx[i], em_size, vertices);
+                                fixed_to_double(ppc->apfx[i], em_size, vertices, (front_side ? 0.0 : extrusion));
                                 if(format == WGL_FONT_POLYGONS)
                                     pgluTessVertex(tess, vertices, vertices);
                                 else
                                     funcs->Vertex3d(vertices[0], vertices[1], vertices[2]);
                                 vertices += 3;
                             }
-                            fixed_to_double(ppc->apfx[i], em_size, previous);
+                            fixed_to_double(ppc->apfx[i], em_size, previous, (front_side ? 0.0 : extrusion));
                             vertex_total++;
                         }
                         break;
@@ -464,10 +613,10 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
 
                             curve[0].x = previous[0];
                             curve[0].y = previous[1];
-                            fixed_to_double(ppc->apfx[i], em_size, curve_vertex);
+                            fixed_to_double(ppc->apfx[i], em_size, curve_vertex, (front_side ? 0.0 : extrusion));
                             curve[1].x = curve_vertex[0];
                             curve[1].y = curve_vertex[1];
-                            fixed_to_double(ppc->apfx[i + 1], em_size, curve_vertex);
+                            fixed_to_double(ppc->apfx[i + 1], em_size, curve_vertex, (front_side ? 0.0 : extrusion));
                             curve[2].x = curve_vertex[0];
                             curve[2].y = curve_vertex[1];
                             if(i < ppc->cpfx-2)
@@ -486,7 +635,10 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                                     TRACE("\t\t\tvertex at %f,%f\n", points[j].x, points[j].y);
                                     vertices[0] = points[j].x;
                                     vertices[1] = points[j].y;
-                                    vertices[2] = 0.0;
+                                    if (front_side)
+                                        vertices[2] = 0.0;
+                                    else
+                                        vertices[2] = extrusion;
                                     if(format == WGL_FONT_POLYGONS)
                                         pgluTessVertex(tess, vertices, vertices);
                                     else
@@ -505,6 +657,15 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                             pgluTessEndContour(tess);
                         else
                             funcs->End();
+                        // Insert a closing DBL_MAX vertex to mark the end of the quad sequence in draw_side_faces()
+                        vertex_total++;
+                        if (vertices)
+                        {
+                            vertices[0] = DBL_MAX;
+                            vertices[1] = DBL_MAX;
+                            vertices[2] = DBL_MAX;
+                            vertices += 3;
+                        }
                         goto error_in_list;
                     }
 
@@ -515,20 +676,46 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                     pgluTessEndContour(tess);
                 else
                     funcs->End();
+                // Insert a closing DBL_MAX vertex to mark the end of the quad sequence in draw_side_faces()
+                vertex_total++;
+                if (vertices)
+                {
+                    vertices[0] = DBL_MAX;
+                    vertices[1] = DBL_MAX;
+                    vertices[2] = DBL_MAX;
+                    vertices += 3;
+                }
                 pph = (TTPOLYGONHEADER*)((char*)pph + pph->cb);
+            }
+            if (front_side && vertices != NULL) {
+                front_side = 0;
+                if (format == WGL_FONT_POLYGONS) {
+                    pgluTessEndPolygon(tess);
+                    pgluTessNormal(tess, 0, 0, 1);
+                    pgluTessBeginPolygon(tess, NULL);
+                }
             }
         }
 
 error_in_list:
-        if(format == WGL_FONT_POLYGONS)
+        if (format == WGL_FONT_POLYGONS) {
             pgluTessEndPolygon(tess);
+            if (vertices_backface && vertex_total > 0) {
+                if (glyph == first + 79)
+                    draw_side_faces(vertices_backface, vertices, extrusion);
+            }
+
+        }
+
         funcs->Translated((GLdouble)gm.gmCellIncX / em_size, (GLdouble)gm.gmCellIncY / em_size, 0.0);
         funcs->EndList();
 
         HeapFree(GetProcessHeap(), 0, buf);
 
-        if(vertices_temp)
-            HeapFree(GetProcessHeap(), 0, vertices_temp);
+        if (vertices_frontface)
+            HeapFree(GetProcessHeap(), 0, vertices_frontface);
+        if (vertices_backface)
+            HeapFree(GetProcessHeap(), 0, vertices_backface);
     }
 
  error:
